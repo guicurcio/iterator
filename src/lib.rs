@@ -5,7 +5,7 @@ fn main() {
     while let Some(e) = iter.next() {}
 }
 
-fn second_iter() {
+pub fn second_iter() {
     for x in vec![1, 2, 3, 4, 5] {
         // ...
     }
@@ -15,7 +15,7 @@ fn second_iter() {
 
 // two takes of a vector:
 
-fn something() {
+pub fn something() {
     let vs = vec![1, 2, 3];
     // for v in vs {
     //     // consumes vs, we get owned vs.
@@ -29,12 +29,12 @@ fn something() {
     }
 }
 
-pub fn flatten<I>(iter: I) -> Flatten<I>
+pub fn flatten<I>(iter: I) -> Flatten<I::IntoIter>
 where
-    I: Iterator,
+    I: IntoIterator,
     I::Item: IntoIterator,
 {
-    Flatten::new(iter)
+    Flatten::new(iter.into_iter())
 }
 
 pub struct Flatten<O>
@@ -43,8 +43,8 @@ where
     O::Item: IntoIterator,
 {
     outer: O,
-    inner: Option<<O::Item as IntoIterator>::IntoIter>,
-    // We may not have an inner iterator at the start.
+    front_itter: Option<<O::Item as IntoIterator>::IntoIter>,
+    back_itter: Option<<O::Item as IntoIterator>::IntoIter>,
 }
 
 impl<O> Flatten<O>
@@ -55,7 +55,8 @@ where
     fn new(iter: O) -> Self {
         Self {
             outer: iter,
-            inner: None,
+            front_itter: None,
+            back_itter: None,
         }
     }
 }
@@ -69,17 +70,46 @@ where
 {
     type Item = <O::Item as IntoIterator>::Item;
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(ref mut inner_iter) = self.inner {
-            if let Some(i) = inner_iter.next() {
-                return Some(i);
+        loop {
+            if let Some(ref mut front_itter) = self.front_itter {
+                if let Some(i) = front_itter.next() {
+                    return Some(i);
+                }
+                self.front_itter = None;
             }
-            self.inner = None;
-        }
 
-        let inner_item = self.outer.next()?;
-        let mut inner_iter = inner_item.into_iter();
-        inner_iter.next()
-        // we are dropping the iterator :point_up:
+            if let Some(next_inner) = self.outer.next() {
+                self.front_itter = Some(next_inner.into_iter());
+            } else {
+                // if it stops iterating.
+                return self.back_itter.as_mut()?.next();
+            };
+        }
+    }
+}
+
+impl<O> DoubleEndedIterator for Flatten<O>
+where
+    O: DoubleEndedIterator,
+    O::Item: IntoIterator,
+    <O::Item as IntoIterator>::IntoIter: DoubleEndedIterator,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(ref mut back_itter) = self.back_itter {
+                if let Some(i) = back_itter.next_back() {
+                    return Some(i);
+                }
+                self.back_itter = None;
+            }
+
+            if let Some(next_back_inner) = self.outer.next_back() {
+                self.back_itter = Some(next_back_inner.into_iter());
+            } else {
+                // if it stops iterating.
+                return self.front_itter.as_mut()?.next_back();
+            };
+        }
     }
 }
 
@@ -104,10 +134,45 @@ mod tests {
     #[test]
     // fails if we expect two.
     fn two() {
-        assert_eq!(flatten(std::iter::once(vec![0, 1])).count(), 1)
+        assert_eq!(flatten(std::iter::once(vec![0, 1])).count(), 2)
     }
     #[test]
     fn two_wide() {
-        assert_eq!(flatten(vec![vec![1], vec![2]].into_iter()).count(), 2)
+        // A call to flatten should return an iterator.
+        assert_eq!(flatten(vec![vec![1], vec![2]]).count(), 2)
+    }
+
+    #[test]
+    fn reverse() {
+        assert_eq!(
+            flatten(std::iter::once(vec!["a", "b"]))
+                .rev()
+                .collect::<Vec<_>>(),
+            vec!["b", "a"]
+        )
+    }
+
+    #[test]
+    fn reverse_wide() {
+        // A call to flatten should return an iterator.
+        assert_eq!(
+            flatten(vec![vec!["a"], vec!["b"]])
+                .rev()
+                .collect::<Vec<_>>(),
+            vec!["b", "a"]
+        )
+    }
+
+    #[test]
+    fn both_ends() {
+        let mut iter = flatten(vec![vec!["a1", "a2", "a3"], vec!["b1", "b2", "b3"]]);
+        assert_eq!(iter.next(), Some("a1"));
+        assert_eq!(iter.next_back(), Some("b3"));
+        assert_eq!(iter.next(), Some("a2"));
+        assert_eq!(iter.next_back(), Some("b2"));
+        assert_eq!(iter.next(), Some("a3"));
+        assert_eq!(iter.next_back(), Some("b1"));
+        assert_eq!(iter.next_back(), None);
+        assert_eq!(iter.next_back(), None);
     }
 }
