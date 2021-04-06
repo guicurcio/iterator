@@ -175,4 +175,9 @@ mod tests {
         assert_eq!(iter.next_back(), None);
         assert_eq!(iter.next_back(), None);
     }
+
+    #[test]
+    fn deep() {
+        assert_eq!(flatten(flatten(vec![vec![vec![0, 1]]])).count(), 2)
+    }
 }
